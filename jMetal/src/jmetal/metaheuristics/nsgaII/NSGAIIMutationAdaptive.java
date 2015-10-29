@@ -198,7 +198,9 @@ public class NSGAIIMutationAdaptive extends Algorithm {
 		}
 	    }
 	    
-	    delta_dist = max-min;
+	    delta_dist = (max-min)/max;
+	    double probability = (1-(1/(1+Math.pow(Math.exp(1.0), -0.07*generation))) * delta_dist);
+	    mutationOperator.setParameter("probability", probability);
 	    
 	    
 	    // This piece of code shows how to use the indicator object into the
