@@ -6,12 +6,15 @@
  */
 package jmetal.metaheuristics.nsgaII;
 
+import java.util.List;
+
 import jmetal.core.*;
 import jmetal.qualityIndicator.QualityIndicator;
 import jmetal.util.Distance;
 import jmetal.util.JMException;
 import jmetal.util.Ranking;
 import jmetal.util.comparators.CrowdingComparator;
+import jmetal.util.parallel.IParallelEvaluator;
 
 /**
  * Implementation of NSGA-II. This implementation of NSGA-II makes use of a
@@ -30,14 +33,17 @@ public class NSGAIIMutationAdaptive extends Algorithm {
     private double delta_dist;
     private double generation;
 
+    IParallelEvaluator parallelEvaluator_;
+
     /**
      * Constructor
      * 
      * @param problem
      *            Problem to solve
      */
-    public NSGAIIMutationAdaptive(Problem problem) {
+    public NSGAIIMutationAdaptive(Problem problem, IParallelEvaluator evaluator) {
 	super(problem);
+	parallelEvaluator_ = evaluator;
     } // NSGAII
 
     /**
@@ -51,6 +57,7 @@ public class NSGAIIMutationAdaptive extends Algorithm {
 	int populationSize;
 	int maxEvaluations;
 	int evaluations;
+	int numberOfThreads;
 
 	QualityIndicator indicators; // QualityIndicator object
 	int requiredEvaluations; // Use in the example of use of the
@@ -72,7 +79,10 @@ public class NSGAIIMutationAdaptive extends Algorithm {
 	maxEvaluations = ((Integer) getInputParameter("maxEvaluations"))
 		.intValue();
 	indicators = (QualityIndicator) getInputParameter("indicators");
+	
+	parallelEvaluator_.startEvaluator(problem_);
 
+	
 	// Initialize the variables
 	population = new SolutionSet(populationSize);
 	evaluations = 0;
@@ -88,11 +98,14 @@ public class NSGAIIMutationAdaptive extends Algorithm {
 	Solution newSolution;
 	for (int i = 0; i < populationSize; i++) {
 	    newSolution = new Solution(problem_);
-	    problem_.evaluate(newSolution);
-	    problem_.evaluateConstraints(newSolution);
+	    parallelEvaluator_.addSolutionForEvaluation(newSolution);
+	}
+
+	List<Solution> solutionList = parallelEvaluator_.parallelEvaluation();
+	for (Solution solution : solutionList) {
+	    population.add(solution);
 	    evaluations++;
-	    population.add(newSolution);
-	} // for
+	}
 
 	// Generations
 	while (evaluations < maxEvaluations) {
@@ -104,26 +117,27 @@ public class NSGAIIMutationAdaptive extends Algorithm {
 	    offspringPopulation = new SolutionSet(populationSize);
 	    Solution[] parents = new Solution[2];
 	    for (int i = 0; i < (populationSize / 2); i++) {
-		if (evaluations < maxEvaluations) {
-		    // obtain parents
-		    parents[0] = (Solution) selectionOperator
-			    .execute(population);
-		    parents[1] = (Solution) selectionOperator
-			    .execute(population);
-		    Solution[] offSpring = (Solution[]) crossoverOperator
-			    .execute(parents);
-		    mutationOperator.execute(offSpring[0]);
-		    mutationOperator.execute(offSpring[1]);
-		    problem_.evaluate(offSpring[0]);
-		    problem_.evaluateConstraints(offSpring[0]);
-		    problem_.evaluate(offSpring[1]);
-		    problem_.evaluateConstraints(offSpring[1]);
-		    offspringPopulation.add(offSpring[0]);
-		    offspringPopulation.add(offSpring[1]);
-		    evaluations += 2;
-		} // if
-	    } // for
-
+			if (evaluations < maxEvaluations) {
+			    // obtain parents
+			    parents[0] = (Solution) selectionOperator
+				    .execute(population);
+			    parents[1] = (Solution) selectionOperator
+				    .execute(population);
+			    Solution[] offSpring = (Solution[]) crossoverOperator
+				    .execute(parents);
+			    mutationOperator.execute(offSpring[0]);
+			    mutationOperator.execute(offSpring[1]);
+			    parallelEvaluator_.addSolutionForEvaluation(offSpring[0]);
+			    parallelEvaluator_.addSolutionForEvaluation(offSpring[1]);
+			} // if
+		    } // for
+	    List<Solution> solutions = parallelEvaluator_.parallelEvaluation();
+	    
+	    for (Solution solution : solutions) {
+		offspringPopulation.add(solution);
+		evaluations++;
+	    }
+	    
 	    // Create the solutionSet union of solutionSet and offSpring
 	    union = ((SolutionSet) population).union(offspringPopulation);
 
@@ -205,6 +219,8 @@ public class NSGAIIMutationAdaptive extends Algorithm {
 		} // if
 	    } // if
 	} // while
+	
+	parallelEvaluator_.stopEvaluator();
 
 	// Return as output parameter the required evaluations
 	setOutputParameter("evaluations", requiredEvaluations);

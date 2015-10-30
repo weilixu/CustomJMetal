@@ -196,7 +196,8 @@ public class pNSGAII extends Algorithm {
 		double dist = population.get(k).getCrowdingDistance();
 		if (dist > max) {
 		    max = dist;
-		} else if (dist < min) {
+		}
+		if (dist < min) {
 		    min = dist;
 		}
 	    }
