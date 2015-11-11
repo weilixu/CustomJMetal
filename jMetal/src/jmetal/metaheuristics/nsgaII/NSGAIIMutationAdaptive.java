@@ -186,24 +186,30 @@ public class NSGAIIMutationAdaptive extends Algorithm {
 	    //TODO update generation and distance between best and worst solution
 	    generation ++; //the generation is increased by 1
 	    
-	    double max = Double.MIN_VALUE;
-	    double min = Double.MAX_VALUE;
+//	    double max = Double.MIN_VALUE;
+//	    double min = Double.MAX_VALUE;
+	    double total = 0.0;
 	    for(int k=0; k<populationSize; k++){
 		double dist = population.get(k).getCrowdingDistance();
-		if(dist>max){
-		    max = dist;
-		}
-		if(dist<min){
-		    min = dist;
-		}
+		if(dist==Double.POSITIVE_INFINITY){dist = 0;}
+//		if(dist>max){
+//		    max = dist;
+//		}
+//		if(dist<min){
+//		    min = dist;
+//		}
+		total = total + dist;
 	    }
 	    
 	    //mutation updates
-	    delta_dist = (max-min)/max;//normalize distance
+	    //delta_dist = (max-min)/max;//normalize distance
+	    delta_dist = 1 - 1/(1+Math.pow(Math.exp(1.0), (0.5*total)));
 	    //the probability is calculate by (1- (1/(1+e^-0.07t))) * delta_dist
 	    double probability = (1-(1/(1+Math.pow(Math.exp(1.0), -0.07*generation))) * delta_dist);
+	    if(probability>1) probability = 1.0;
 	    mutationOperator.setParameter("probability", probability);//update probability
 	    
+	    population.printFeasibleFUN("FUN" + generation);
 	    
 	    // This piece of code shows how to use the indicator object into the
 	    // code
