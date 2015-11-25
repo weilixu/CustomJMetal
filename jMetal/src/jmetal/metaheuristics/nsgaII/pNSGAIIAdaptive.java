@@ -1,6 +1,5 @@
 package jmetal.metaheuristics.nsgaII;
 
-import java.util.Comparator;
 import java.util.List;
 
 import jmetal.core.Algorithm;
@@ -8,176 +7,171 @@ import jmetal.core.Operator;
 import jmetal.core.Problem;
 import jmetal.core.Solution;
 import jmetal.core.SolutionSet;
+import jmetal.qualityIndicator.QualityIndicator;
 import jmetal.util.Distance;
 import jmetal.util.JMException;
-import jmetal.util.PseudoRandom;
 import jmetal.util.Ranking;
 import jmetal.util.comparators.CrowdingComparator;
-import jmetal.util.comparators.DominanceComparator;
-import jmetal.util.offspring.BitFlipMutationOffspring;
-import jmetal.util.offspring.Offspring;
-import jmetal.util.offspring.PolynomialMutationOffspring;
-import jmetal.util.offspring.SinglePointOffSpring;
 import jmetal.util.parallel.IParallelEvaluator;
 
+/**
+ * Not completed yet
+ * 
+ * @author Weili
+ *
+ */
 public class pNSGAIIAdaptive extends Algorithm {
+
     IParallelEvaluator parallelEvaluator_;
+    private int generation = 0;// start from first generation
+    private int realSimuN;
+    private int circleDivider;
 
-    public int populationSize_;
-    public SolutionSet population_;
-    public SolutionSet offspringPopulation_;
-    public SolutionSet union_;
-
-    int maxEvaluations_;
-    int evaluations_;
-
-    int[] contributionCounter_; // contribution per crossover operator
-    double[] contribution_; // contribution per crossover operator
-
-    public pNSGAIIAdaptive(Problem problem, IParallelEvaluator evaluator) {
+    /**
+     * Constructor
+     * 
+     * @param problem
+     *            Problem to solve
+     * @param evaluator
+     *            Parallel evaluator
+     */
+    public pNSGAIIAdaptive(Problem problem, IParallelEvaluator evaluator,
+	    int realSimu, int divider) {
 	super(problem);
 
 	parallelEvaluator_ = evaluator;
-    }// pNSGAIIAdaptive
+	realSimuN = realSimu;
+	circleDivider = divider;
+    } // pNSGAIIAdaptive
 
-    @Override
+    /**
+     * Runs the NSGA-II algorithm.
+     * 
+     * @return a <code>SolutionSet</code> that is a set of non dominated
+     *         solutions as a result of the algorithm execution
+     * @throws JMException
+     */
     public SolutionSet execute() throws JMException, ClassNotFoundException {
-	double contrDE = 0;
-	double contrSBX = 0;
-	double contrPol = 0;
-	double contrTotalDE = 0;
-	double contrTotalSBX = 0;
-	double contrTotalPol = 0;
+	int populationSize;
+	int maxEvaluations;
+	int evaluations;
+	int numberOfThreads;
 
-	double contrReal[] = new double[3];
-	contrReal[0] = contrReal[1] = contrReal[2] = 0;
+	QualityIndicator indicators; // QualityIndicator object
+	int requiredEvaluations; // Use in the example of use of the
+	// indicators object (see below)
 
-	Comparator dominance = new DominanceComparator();
-	Comparator crowdingComparator = new CrowdingComparator();
-	Distance distance = new Distance();
+	SolutionSet population;
+	SolutionSet offspringPopulation;
+	SolutionSet union;
+	SolutionSet simuPopulation;
+	SolutionSet regressPopulation;
 
+	Operator mutationOperator;
+	Operator crossoverOperator;
 	Operator selectionOperator;
 
-	// Read parameter values
-	populationSize_ = ((Integer) getInputParameter("populationSize"))
+	Distance distance = new Distance();
+
+	// Read the parameters
+	populationSize = ((Integer) getInputParameter("populationSize"))
 		.intValue();
-	// CR_ = ((Double) getInputParameter("CR")).doubleValue();
-	// F_ = ((Double) getInputParameter("F")).doubleValue();
-	maxEvaluations_ = ((Integer) getInputParameter("maxEvaluations"))
+	maxEvaluations = ((Integer) getInputParameter("maxEvaluations"))
 		.intValue();
+	indicators = (QualityIndicator) getInputParameter("indicators");
 
 	parallelEvaluator_.startEvaluator(problem_);
 
-	// Init the variables
-	population_ = new SolutionSet(populationSize_);
-	evaluations_ = 0;
+	// Initialize the variables
+	population = new SolutionSet(populationSize);
+	simuPopulation = new SolutionSet(populationSize);
+	regressPopulation = new SolutionSet(populationSize);
+	evaluations = 0;
 
+	requiredEvaluations = 0;
+
+	// Read the operators
+	mutationOperator = operators_.get("mutation");
+	crossoverOperator = operators_.get("crossover");
 	selectionOperator = operators_.get("selection");
-	Offspring[] getOffspring;
-	int N_O; // number of offpring objects
-
-	getOffspring = ((Offspring[]) getInputParameter("offspringsCreators"));
-	N_O = getOffspring.length;
-
-	contribution_ = new double[N_O];
-	contributionCounter_ = new int[N_O];
-
-	contribution_[0] = (double) (populationSize_ / (double) N_O)
-		/ (double) populationSize_;
-
-	for (int i = 1; i < N_O; i++) {
-	    contribution_[i] = (double) (populationSize_ / (double) N_O)
-		    / (double) populationSize_ + (double) contribution_[i - 1];
-	}
-
-	for (int i = 0; i < N_O; i++) {
-	    System.out.println(getOffspring[i].configuration());
-	    System.out.println("Contribution: " + contribution_[i]);
-	}
 
 	// Create the initial solutionSet
 	Solution newSolution;
-	for (int i = 0; i < populationSize_; i++) {
+	for (int i = 0; i < populationSize; i++) {
 	    newSolution = new Solution(problem_);
-	    newSolution.setLocation(i);
 	    parallelEvaluator_.addSolutionForEvaluation(newSolution);
-
-	} // for
+	}
 
 	List<Solution> solutionList = parallelEvaluator_.parallelEvaluation();
 	for (Solution solution : solutionList) {
-	    evaluations_++;
-	    population_.add(solution);
+	    population.add(solution);
+	    simuPopulation.add(solution);// fill in simulation population
+	    evaluations++;
 	}
 
-	while (evaluations_ < maxEvaluations_) {
+	// Generations
+	while (evaluations < maxEvaluations) {
+	    // identify the generation for regression or real simulation first
+	    generation++; // the generation is increased by 1
+	    int newGenCounter = generation % circleDivider;
 
 	    // Create the offSpring solutionSet
-	    offspringPopulation_ = new SolutionSet(populationSize_);
+	    offspringPopulation = new SolutionSet(populationSize);
 	    Solution[] parents = new Solution[2];
-	    for (int i = 0; i < (populationSize_ / N_O); i++) {
-		if (evaluations_ < maxEvaluations_) {
-		    Solution individual = new Solution(
-			    population_.get(PseudoRandom.randInt(0,
-				    populationSize_ - 1)));
-		    // Solution individual = new Solution(population_.get(i));
+	    if (newGenCounter == 0) {
+		for(int i=0; i<populationSize; i++){
+		    parallelEvaluator_.addSolutionForEvaluation(population.get(i));
+		}
+	    } else {
+		for (int i = 0; i < (populationSize / 2); i++) {
+		    if (evaluations < maxEvaluations) {
+			// obtain parents
+			parents[0] = (Solution) selectionOperator
+				.execute(population);
+			parents[1] = (Solution) selectionOperator
+				.execute(population);
+			Solution[] offSpring = (Solution[]) crossoverOperator
+				.execute(parents);
+			mutationOperator.execute(offSpring[0]);
+			mutationOperator.execute(offSpring[1]);
+			parallelEvaluator_
+				.addSolutionForEvaluation(offSpring[0]);
+			parallelEvaluator_
+				.addSolutionForEvaluation(offSpring[1]);
+		    } // if
+		} // for
+	    }// if
+	    List<Solution> solutions = parallelEvaluator_.parallelEvaluation();
 
-		    int selected = 0;
-		    boolean found = false;
-		    Solution offSpring = null;
-		    double rnd = PseudoRandom.randDouble();
-		    for (selected = 0; selected < N_O; selected++) {
-
-			if (!found && (rnd <= contribution_[selected])) {
-			    if ("DE".equals(getOffspring[selected].id())) {
-				offSpring = getOffspring[selected]
-					.getOffspring(population_, i);
-				contrDE++;
-			    } else if ("SBXCrossover"
-				    .equals(getOffspring[selected].id())) {
-				offSpring = getOffspring[selected]
-					.getOffspring(population_);
-				contrSBX++;
-			    } else if ("PolynomialMutation"
-				    .equals(getOffspring[selected].id())) {
-				offSpring = ((PolynomialMutationOffspring) getOffspring[selected])
-					.getOffspring(individual);
-				contrPol++;
-			    } else if("SingePoint".equals(getOffspring[selected].id())){
-				offSpring = ((SinglePointOffSpring) getOffspring[selected]).getOffspring(population_,i);
-				contrDE++;
-			    } else if("BitFlipMutation".equals(getOffspring[selected].id())){
-				offSpring = ((BitFlipMutationOffspring) getOffspring[selected]).getOffspring(individual);
-				contrSBX++;
-			    }
-			    else{System.out
-					.println("Error in NSGAIIAdaptive. Operator "
-						+ offSpring + " does not exist");
-			    }
-			    offSpring.setFitness((int) selected);
-			    found = true;
-			} // if
-			parallelEvaluator_.addSolutionForEvaluation(offSpring);
-		    } // for
-		} // if
-	    } // for
-	    
-	    List<Solution> solutions = parallelEvaluator_
-		    .parallelEvaluation();
 	    for (Solution solution : solutions) {
-		offspringPopulation_.add(solution);
-		evaluations_++;
+		offspringPopulation.add(solution);
+		evaluations++;
 	    }
 
 	    // Create the solutionSet union of solutionSet and offSpring
-	    union_ = ((SolutionSet) population_).union(offspringPopulation_);
-	    // Ranking the union
-	    Ranking ranking = new Ranking(union_);
+	    if (newGenCounter < realSimuN) {
+		// case when regression switch to real simulation
+		union = ((SolutionSet) simuPopulation)
+			.union(offspringPopulation);
+	    } else {
+		if (regressPopulation.size() == 0) {
+		    // case when the first time using regression, copy
+		    // population
+		    for (int j = 0; j < population.size(); j++) {
+			regressPopulation.add(population.get(j));
+		    }
+		}
+		union = ((SolutionSet) regressPopulation)
+			.union(offspringPopulation);
+	    }
 
-	    int remain = populationSize_;
+	    // Ranking the union
+	    Ranking ranking = new Ranking(union);
+
+	    int remain = populationSize;
 	    int index = 0;
 	    SolutionSet front = null;
-	    population_.clear();
+	    population.clear();
 
 	    // Obtain the next front
 	    front = ranking.getSubfront(index);
@@ -188,7 +182,7 @@ public class pNSGAIIAdaptive extends Algorithm {
 			problem_.getNumberOfObjectives());
 		// Add the individuals of this front
 		for (int k = 0; k < front.size(); k++) {
-		    population_.add(front.get(k));
+		    population.add(front.get(k));
 		} // for
 
 		// Decrement remain
@@ -207,61 +201,56 @@ public class pNSGAIIAdaptive extends Algorithm {
 			problem_.getNumberOfObjectives());
 		front.sort(new CrowdingComparator());
 		for (int k = 0; k < remain; k++) {
-		    population_.add(front.get(k));
+		    population.add(front.get(k));
 		} // for
 
 		remain = 0;
 	    } // if
 
-	    // CONTRIBUTION CALCULATING PHASE
-	    // First: reset contribution counter
-	    for (int i = 0; i < N_O; i++) {
-		contributionCounter_[i] = 0;
-	    }
-
-	    // Second: determine the contribution of each operator
-	    for (int i = 0; i < population_.size(); i++) {
-		if ((int) population_.get(i).getFitness() != -1) {
-		    contributionCounter_[(int) population_.get(i).getFitness()] += 1;
+	    if (newGenCounter < realSimuN) {
+		// case when real simulation is required
+		simuPopulation.clear();
+		for (int j = 0; j < population.size(); j++) {
+		    simuPopulation.add(population.get(j));
 		}
-		population_.get(i).setFitness(-1);
-	    }
 
-	    contrTotalDE += contributionCounter_[0];
-	    contrTotalSBX += contributionCounter_[1];
-	    //contrTotalPol += contributionCounter_[2];
-
-	    int minimumContribution = 1;
-	    int totalContributionCounter = 0;
-
-	    for (int i = 0; i < N_O; i++) {
-		if (contributionCounter_[i] < minimumContribution) {
-		    contributionCounter_[i] = minimumContribution;
-		}
-		totalContributionCounter += contributionCounter_[i];
-	    }
-
-	    if (totalContributionCounter == 0) {
-		for (int i = 0; i < N_O; i++) {
-		    contributionCounter_[i] = 10;
+	    } else {
+		// case when regression simulation is required
+		regressPopulation.clear();
+		for (int j = 0; j < population.size(); j++) {
+		    regressPopulation.add(population.get(j));
 		}
 	    }
+	    population
+		    .printFeasibleFUN("E:\\02_Weili\\02_ResearchTopic\\Optimization\\ParetoFronts\\Front"
+			    + generation);
 
-	    // Third: calculating contribution
-	    contribution_[0] = contributionCounter_[0] * 1.0
-		    / (double) totalContributionCounter;
-	    for (int i = 1; i < N_O; i++) {
-		contribution_[i] = contribution_[i - 1] + 1.0
-			* contributionCounter_[i]
-			/ (double) totalContributionCounter;
-	    }
+	    // System.out.println("Here is the distance between best and worst: "
+	    // + delta_dist);
+
+	    // This piece of code shows how to use the indicator object into the
+	    // code
+	    // of NSGA-II. In particular, it finds the number of evaluations
+	    // required
+	    // by the algorithm to obtain a Pareto front with a hypervolume
+	    // higher
+	    // than the hypervolume of the true Pareto front.
+	    if ((indicators != null) && (requiredEvaluations == 0)) {
+		double HV = indicators.getHypervolume(population);
+		if (HV >= (0.98 * indicators.getTrueParetoFrontHypervolume())) {
+		    requiredEvaluations = evaluations;
+		} // if
+	    } // if
 
 	} // while
 
 	parallelEvaluator_.stopEvaluator();
 
+	// Return as output parameter the required evaluations
+	setOutputParameter("evaluations", requiredEvaluations);
+
 	// Return the first non-dominated front
-	Ranking ranking = new Ranking(population_);
+	Ranking ranking = new Ranking(population);
 	return ranking.getSubfront(0);
-    }
+    } // execute
 }
